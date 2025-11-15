@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hidden Card Game — Demo</title>
+  <style>
+    body { font-family: 'Segoe UI', Tahoma, sans-serif; margin:0; background:#f1f5f9; color:#1e293b; }
+    header { background:#2563eb; color:#fff; padding:18px 20px; font-size:24px; font-weight:700; box-shadow:0 3px 10px rgba(0,0,0,.15); }
+    main { max-width:1100px; margin:24px auto; padding:0 16px; }
+    section { background:#fff; border-radius:12px; padding:16px; box-shadow:0 4px 12px rgba(0,0,0,.08); margin-bottom:18px; }
+    h3 { margin:8px 0 12px; }
+    .controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+    button { background:#2563eb; color:#fff; border:none; border-radius:8px; padding:10px 14px; font-size:15px; cursor:pointer; }
+    button:disabled { background:#94a3b8; cursor:not-allowed; }
+    select,input { padding:8px; border-radius:8px; border:1px solid #cbd5e1; }
+    #historyLog p { background:#f8fafc; margin:6px 0; padding:10px; border-left:4px solid #2563eb; border-radius:4px; }
+    #lastResult { background:#f0fdfa; padding:12px; border-left:4px solid #14b8a6; border-radius:8px; margin-top:10px; }
+    details { border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; background:#f8fafc; margin-bottom:10px; }
+    .entropyBox { margin-top:10px; padding:8px; background:#eef2ff; border-radius:6px; }
+    .distributionBar { height:10px; background:#c7d2fe; border-radius:6px; }
+    .muted { color:#475569; }
+    .small { font-size:13px; color:#475569; }
+    table { border-collapse: collapse; width:100%; }
+    td,th { padding:6px 8px; border-bottom:1px solid #edf2f7; }
+  </style>
+</head>
+<body>
+<header>Hidden Card Game — Demo</header>
+<main>
+
+  <section>
+    <h3>🎯 Strategy</h3>
+    <div class="controls">
+      <label for="strategySelect">Mode:</label>
+      <select id="strategySelect">
+        <option value="info">Information gain (original)</option>
+        <option value="shannon">Shannon entropy</option>
+      </select>
+      <button id="applyStrategyBtn">Apply</button>
+      <div id="strategyDescription" class="muted small">Using Information gain heuristic</div>
+    </div>
+  </section>
+
+  <section>
+    <h3>🃏 Card Distribution</h3>
+    <div class="controls">
+      <button id="setRandomBtn">Random Distribution</button>
+      <button id="setCustomBtn">Apply Custom</button>
+      <label for="p0_input">P0:</label><input id="p0_input" placeholder="1,2,3">
+      <label for="p1_input">P1:</label><input id="p1_input" placeholder="4,5,6">
+      <label for="p2_input">P2:</label><input id="p2_input" placeholder="7,8,9">
+      <label for="hidden_input">Hidden:</label><input id="hidden_input" placeholder="">
+    </div>
+    <p id="hand" class="muted"></p>
+  </section>
+
+  <section>
+    <h3>❓ Ask (You are Player 0)</h3>
+    <div class="controls">
+      <label for="playerSelect">Ask Player:</label>
+      <select id="playerSelect"><option value="1">Player 1</option><option value="2">Player 2</option></select>
+
+      <label for="querySelect">Query:</label>
+      <select id="querySelect"></select>
+
+      <button id="askBtn" disabled>Ask</button>
+    </div>
+
+    <div id="queryEvaluation" class="entropyBox"></div>
+    <div id="lastResult"></div>
+  </section>
+
+  <section>
+    <h3>📊 Shannon Distribution (P0's POV)</h3>
+    <div id="probDist"></div>
+  </section>
+
+  <section>
+    <h3>🔍 Query Scores (top first)</h3>
+    <div id="queryScores"></div>
+  </section>
+
+  <section>
+    <h3>💡 Recommendation</h3>
+    <div id="recommendation">No recommendation yet.</div>
+  </section>
+
+  <section>
+    <h3>⏪ Rewind / Time Travel</h3>
+    <div class="controls">
+      <label for="stepSelect">Jump to:</label>
+      <select id="stepSelect"></select>
+      <button id="goStepBtn" disabled>Go</button>
+      <button id="undoBtn" disabled>Undo</button>
+    </div>
+    <div id="stepMeta" class="muted small"></div>
+  </section>
+
+  <section>
+    <h3>🧠 P0 Belief & Confirmed</h3>
+    <div id="beliefP0" class="small"></div>
+    <div id="knownCards"></div>
+  </section>
+
+  <section>
+    <h3>🤖 Bot Thinking</h3>
+    <details><summary>Bot 1</summary><div><p><b>Possible hidden:</b> <span id="beliefBot1">-</span></p>
+      <p><b>Confirmed:</b></p>
+      <ul><li>P0: <span id="knownBot1_P0">-</span></li><li>P1: <span id="knownBot1_P1">-</span></li><li>P2: <span id="knownBot1_P2">-</span></li></ul></div></details>
+
+    <details><summary>Bot 2</summary><div><p><b>Possible hidden:</b> <span id="beliefBot2">-</span></p>
+      <p><b>Confirmed:</b></p>
+      <ul><li>P0: <span id="knownBot2_P0">-</span></li><li>P1: <span id="knownBot2_P1">-</span></li><li>P2: <span id="knownBot2_P2">-</span></li></ul></div></details>
+  </section>
+
+  <section>
+    <h3>📜 History</h3>
+    <div id="historyLog"></div>
+  </section>
+
+</main>
+
+<script>
+let QUERY_CARDS = [];
+let currentStrategy = "info";
+
+function renderQueryOptions(list) {
+  const sel = document.getElementById("querySelect"); sel.innerHTML = "";
+  list.forEach((q, i) => sel.innerHTML += `<option value="${i}">{${q.join(", ")}}</option>`);
+}
+
+function renderProbabilityDist(dist) {
+  const box = document.getElementById("probDist"); box.innerHTML = "";
+  if (!dist) { box.innerHTML = "<i>No distribution</i>"; return; }
+  Object.entries(dist).forEach(([card, p]) => {
+    box.innerHTML += `<div><b>${card}:</b> ${(p*100).toFixed(1)}% <div class="distributionBar" style="width:${Math.max(2,p*100)}%"></div></div>`;
+  });
+}
+
+function renderQueryScores(scores) {
+  const box = document.getElementById("queryScores");
+  box.innerHTML = "";
+  if (!scores || scores.length === 0) { box.innerHTML = "<i>No scores computed</i>"; return; }
+  // group by target for nicer display
+  const rows = scores.map(s => `<tr><td>P${s.target}</td><td>{${s.set.join(", ")}}</td><td>${(s.score||0).toFixed(3)}</td><td>${s.ig!==null? (s.ig||0).toFixed(3) : "-"}</td><td>${s.expected_entropy!==null? s.expected_entropy.toFixed(3) : "-"}</td></tr>`).join("");
+  box.innerHTML = `<table><thead><tr><th>Target</th><th>Query</th><th>Score</th><th>IG</th><th>Exp H</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderRecommendation(rec) {
+  const div = document.getElementById("recommendation");
+  if (!rec) { div.innerHTML = "<i>No recommendation</i>"; return; }
+  div.innerHTML = `<b>Ask Player ${rec.target}</b> about {${rec.set.join(", ")}} — score=${(rec.score||0).toFixed(3)} ${rec.ig!==null? "IG="+rec.ig.toFixed(3):""}`;
+}
+
+function renderHistory(hist) {
+  const box = document.getElementById("historyLog"); box.innerHTML = "";
+  hist.forEach(h => box.innerHTML += `<p>${h.who} asked ${h.asked} → <b>${h.got}</b></p>`);
+}
+
+function renderP0Belief(beliefs) {
+  document.getElementById("beliefP0").textContent = beliefs && beliefs[0] ? `[${beliefs[0].join(", ")}]` : "Unknown";
+}
+function renderKnown(certain) {
+  const div = document.getElementById("knownCards");
+  let html = "";
+  if (certain[0] && certain[0].length) html += `<p><b>You:</b> ${certain[0].join(", ")}</p>`;
+  if (certain[1] && certain[1].length) html += `<p><b>P1:</b> ${certain[1].join(", ")}</p>`;
+  if (certain[2] && certain[2].length) html += `<p><b>P2:</b> ${certain[2].join(", ")}</p>`;
+  div.innerHTML = html || "<i>No confirmed knowledge yet</i>";
+}
+function renderBotKnowledge(pk) {
+  if (!pk) return;
+  document.getElementById("beliefBot1").textContent = pk[1].beliefs.join(", ") || "-";
+  document.getElementById("beliefBot2").textContent = pk[2].beliefs.join(", ") || "-";
+  for (let p=0;p<3;p++){
+    document.getElementById("knownBot1_P"+p).textContent = pk[1].certain[p].join(", ") || "-";
+    document.getElementById("knownBot2_P"+p).textContent = pk[2].certain[p].join(", ") || "-";
+  }
+}
+function renderStepMeta(idx, total, labels) {
+  document.getElementById("stepMeta").textContent = `Step ${idx} / ${total-1}`;
+  const sel = document.getElementById("stepSelect"); sel.innerHTML = "";
+  (labels||[]).forEach((lab,i)=> { const o=document.createElement("option"); o.value=i; o.textContent=lab; if(i===idx) o.selected=true; sel.appendChild(o); });
+  document.getElementById("goStepBtn").disabled = total <= 1;
+  document.getElementById("undoBtn").disabled = (sel.value==0);
+}
+
+function applyPayloadCommon(data) {
+  renderHistory(data.history);
+  renderP0Belief(data.beliefs);
+  renderKnown(data.certain_cards);
+  renderBotKnowledge(data.player_knowledge);
+  renderStepMeta(data.step_index, data.total_steps, data.step_labels);
+  renderProbabilityDist(data.shannon_dist);
+  renderQueryScores(data.query_scores);
+  renderRecommendation(data.recommendation);
+  document.getElementById("askBtn").disabled = !!data.game_over;
+  if (data.game_over) {
+    document.getElementById("lastResult").innerHTML += `<br><h3>🎉 Game Over — Player ${data.winner} discovered the hidden card: ${data.hidden_card}</h3>`;
+  }
+}
+
+/* ---------- Handlers ---------- */
+document.getElementById("applyStrategyBtn").onclick = () => {
+  const s = document.getElementById("strategySelect").value;
+  currentStrategy = s;
+  document.getElementById("strategyDescription").textContent = s === "info" ? "Using Information gain heuristic" : "Using Shannon entropy scoring";
+  fetch("/set_strategy", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({strategy: s})});
+};
+
+document.getElementById("setRandomBtn").onclick = () => {
+  fetch("/set_distribution", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({mode:"random"})})
+  .then(r=>r.json()).then(d=> {
+    document.getElementById("hand").textContent = "Your cards: " + d.your_hand.join(", ");
+    QUERY_CARDS = d.query_cards; renderQueryOptions(QUERY_CARDS);
+    applyPayloadCommon(d);
+  });
+};
+
+document.getElementById("setCustomBtn").onclick = () => {
+  const p0 = document.getElementById("p0_input").value.split(",").map(x=>x.trim()).filter(x=>x!=="").map(Number);
+  const p1 = document.getElementById("p1_input").value.split(",").map(x=>x.trim()).filter(x=>x!=="").map(Number);
+  const p2 = document.getElementById("p2_input").value.split(",").map(x=>x.trim()).filter(x=>x!=="").map(Number);
+  const hidden = document.getElementById("hidden_input").value.trim() || null;
+  fetch("/set_distribution", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({mode:"custom", hands:{0:p0,1:p1,2:p2}, hidden: hidden})})
+  .then(r=>r.json()).then(d=> {
+    if (d.error) { alert(d.error); return; }
+    document.getElementById("hand").textContent = "Your cards: " + d.your_hand.join(", ");
+    QUERY_CARDS = d.query_cards; renderQueryOptions(QUERY_CARDS);
+    applyPayloadCommon(d);
+  });
+};
+
+document.getElementById("askBtn").onclick = () => {
+  const target = +document.getElementById("playerSelect").value;
+  const query = +document.getElementById("querySelect").value;
+  fetch("/ask", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({asker:0, target, query, strategy: currentStrategy})})
+    .then(r=> {
+      if (!r.ok) return r.json().then(j=> { throw new Error(j.error || "Server error"); });
+      return r.json();
+    })
+    .then(d=> {
+      let out = "";
+      if (d.you) out += `<b>You:</b> asked ${d.you.asked} → <b>${d.you.response}</b><br>`;
+      (d.bots||[]).forEach(b => out += `<b>Bot ${b.bot}:</b> asked ${b.asked} → <b>${b.response}</b><br>`);
+      document.getElementById("lastResult").innerHTML = out;
+      applyPayloadCommon(d);
+    })
+    .catch(e => alert("Server error: " + e.message));
+};
+
+document.getElementById("goStepBtn").onclick = () => {
+  const idx = +document.getElementById("stepSelect").value;
+  fetch("/rewind", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({step: idx})})
+    .then(r=>r.json()).then(d=> { document.getElementById("lastResult").innerHTML = "<i>Rewound</i>"; applyPayloadCommon(d); });
+};
+
+document.getElementById("undoBtn").onclick = () => {
+  const idx = +document.getElementById("stepSelect").value;
+  if (idx <= 0) return;
+  fetch("/rewind", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({step: idx-1})})
+    .then(r=>r.json()).then(d=> { document.getElementById("lastResult").innerHTML = "<i>Undo</i>"; applyPayloadCommon(d); });
+};
+
+document.getElementById("stepSelect").onchange = () => {
+  document.getElementById("undoBtn").disabled = +document.getElementById("stepSelect").value === 0;
+};
+
+</script>
+</body>
+</html>
